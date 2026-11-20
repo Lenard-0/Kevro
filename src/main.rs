@@ -40,6 +40,7 @@ Commands:
   (none)           Run Kevro (menu bar app)
   action <ACTION>  Run one action now and exit, e.g. `kevro action snap:left_half`,
                    `kevro action focus:focus_right`, `kevro action app:com.apple.Safari`
+  windows          List on-screen windows as Kevro sees them (for debugging)
   status           Show Accessibility permission, screens and config status
   help             Show this message";
 
@@ -64,6 +65,15 @@ fn main() {
             }
         },
         ["status"] => print_status(),
+        ["windows"] => {
+            for w in ax::onscreen_windows() {
+                let name = objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(w.pid)
+                    .and_then(|a| a.localizedName())
+                    .map(|n| n.to_string())
+                    .unwrap_or_default();
+                println!("{:>6}  {:<24} {:?}", w.pid, name, w.frame);
+            }
+        }
         ["help" | "--help" | "-h"] => println!("{USAGE}"),
         _ => {
             eprintln!("{USAGE}");

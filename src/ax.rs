@@ -14,7 +14,12 @@ use objc2_application_services::{
     kAXTrustedCheckOptionPrompt,
 };
 use objc2_core_foundation::{
-    CFArray, CFBoolean, CFDictionary, CFEqual, CFRetained, CFString, CFType, CGPoint, CGSize,
+    CFArray, CFBoolean, CFDictionary, CFEqual, CFNumber, CFRetained, CFString, CFType, CGPoint,
+    CGRect, CGSize,
+};
+use objc2_core_graphics::{
+    CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo, CGWindowListOption,
+    kCGNullWindowID, kCGWindowAlpha, kCGWindowBounds, kCGWindowLayer, kCGWindowOwnerPID,
 };
 
 use crate::geom::Rect;
@@ -237,6 +242,94 @@ pub fn focused_window() -> Result<Window, AxErr> {
     let app = Element::application(pid);
     app.child("AXFocusedWindow")
         .or_else(|| app.child("AXMainWindow"))
-        .or_else(|| app.windows().into_iter().find(|w| !w.is_minimized()))
+        .or_else(|| app.windows().into_iter().find(|w| w.is_standard() && !w.is_minimized()))
         .ok_or(AxErr::NoFocusedWindow)
+}
+
+/// A window as seen by the window server (CoreGraphics).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CgWindow {
+    pub pid: i32,
+    /// AX/CG global coordinates.
+    pub frame: Rect,
+}
+
+/// Windows ignored as too small to be real app windows (tooltips, helpers).
+const MIN_WINDOW_SIDE: f64 = 40.0;
+
+/// Visible normal-layer windows on the current Space(s), front to back.
+/// Needs no permission: PID and bounds are always available.
+pub fn onscreen_windows() -> Vec<CgWindow> {
+    let opts = CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements;
+    let Some(list) = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) else {
+        return Vec::new();
+    };
+    // SAFETY: documented as an array of CFDictionary<CFString, CFType>.
+    let list = unsafe { list.cast_unchecked::<CFDictionary>() };
+    let own_pid = std::process::id() as i32;
+    list.iter()
+        .filter_map(|dict| {
+            // SAFETY: window info dictionaries have CFString keys.
+            let d = unsafe { dict.cast_unchecked::<CFString, CFType>() };
+            let num = |key: &CFString| d.get(key)?.downcast::<CFNumber>().ok();
+            // SAFETY: the kCGWindow* keys are valid static CFStrings.
+            let (layer, pid, alpha, bounds) = unsafe {
+                (
+                    num(kCGWindowLayer)?.as_i64()?,
+                    num(kCGWindowOwnerPID)?.as_i64()? as i32,
+                    num(kCGWindowAlpha).and_then(|n| n.as_f64()).unwrap_or(1.0),
+                    d.get(kCGWindowBounds)?.downcast::<CFDictionary>().ok()?,
+                )
+            };
+            if layer != 0 || alpha <= 0.0 || pid == own_pid {
+                return None;
+            }
+            let mut r = CGRect::default();
+            // SAFETY: `bounds` is a CGRect dictionary representation; `r` is a valid out-pointer.
+            if !unsafe { CGRectMakeWithDictionaryRepresentation(Some(&bounds), &mut r) } {
+                return None;
+            }
+            let frame = Rect::new(r.origin.x, r.origin.y, r.size.width, r.size.height);
+            (frame.w >= MIN_WINDOW_SIDE && frame.h >= MIN_WINDOW_SIDE).then_some(CgWindow { pid, frame })
+        })
+        .collect()
+}
+
+/// Find the AX window matching a CG window (same PID, closest frame).
+pub fn ax_window_for(cg: &CgWindow) -> Option<Window> {
+    let mut best: Option<(f64, Window)> = None;
+    for w in Element::application(cg.pid).windows() {
+        let Some(f) = w.frame() else { continue };
+        let d = (f.x - cg.frame.x).abs()
+            + (f.y - cg.frame.y).abs()
+            + (f.w - cg.frame.w).abs()
+            + (f.h - cg.frame.h).abs();
+        if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+            best = Some((d, w));
+        }
+    }
+    // Frames of the same window agree to within a point or two; anything
+    // far off is a different window (e.g. one AX can't see).
+    best.filter(|(d, _)| *d <= 8.0).map(|(_, w)| w)
+}
+
+/// Bring the app with `pid` to the front.
+pub fn activate_pid(pid: i32) {
+    // Setting AXFrontmost activates the app via Accessibility, which isn't
+    // subject to the cooperative-activation limits on NSRunningApplication.
+    if let Err(e) = Element::application(pid).set("AXFrontmost", &CFBoolean::new(true)) {
+        tracing::debug!("AXFrontmost failed: {e}");
+    }
+    if let Some(app) = objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
+        app.activateWithOptions(objc2_app_kit::NSApplicationActivationOptions::empty());
+    }
+}
+
+/// Make `window` the focused window: raise it within its app, then bring the
+/// app to the front.
+pub fn focus_window(window: &Window) {
+    window.raise();
+    activate_pid(window.pid());
+    // Raise again: activation can reorder the app's windows.
+    window.raise();
 }

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use crate::apps;
 use crate::ax::{self, AxErr};
 use crate::config::Options;
-use crate::focus::Direction;
+use crate::focus::{self, Direction};
 use crate::registry::WindowRegistry;
 use crate::screens;
 use crate::snap::{self, SnapAction};
@@ -71,10 +71,7 @@ impl Dispatcher {
                 Ok(())
             }
             Action::Snap(a) => self.snap(*a, options),
-            Action::Focus(_) => {
-                tracing::warn!("{action} is not implemented yet");
-                Ok(())
-            }
+            Action::Focus(d) => self.focus(*d),
         };
         if let Err(e) = result {
             tracing::warn!("{action}: {e}");
@@ -128,6 +125,51 @@ impl Dispatcher {
         let actual = window.set_frame(target)?;
         self.registry.record_snap(&window, current, actual);
         tracing::info!("{} on screen {i}: {current:?} -> {actual:?}", action.name());
+        Ok(())
+    }
+}
+
+impl Dispatcher {
+    fn focus(&mut self, dir: Direction) -> Result<(), AxErr> {
+        let windows = ax::onscreen_windows();
+        // Start from the focused window; if there isn't one (e.g. the
+        // desktop is focused), from the frontmost window on screen.
+        let source = ax::focused_window()
+            .ok()
+            .and_then(|w| Some((w.pid(), w.frame()?)))
+            .or_else(|| windows.first().map(|w| (w.pid, w.frame)));
+        let Some((src_pid, src_frame)) = source else {
+            tracing::info!("{}: no windows on screen", dir.name());
+            return Ok(());
+        };
+        let candidates: Vec<&ax::CgWindow> = windows
+            .iter()
+            .filter(|w| !(w.pid == src_pid && w.frame.approx_eq(&src_frame, 4.0)))
+            .collect();
+        let rects: Vec<_> = candidates.iter().map(|w| w.frame).collect();
+        let Some(i) = focus::pick(src_frame, dir, &rects) else {
+            tracing::info!("{}: no window in that direction", dir.name());
+            return Ok(());
+        };
+        let target = candidates[i];
+        match ax::ax_window_for(target) {
+            Some(w) => {
+                ax::focus_window(&w);
+                tracing::info!(
+                    "{}: focused pid {} \"{}\" at {:?}",
+                    dir.name(),
+                    target.pid,
+                    w.title().unwrap_or_default(),
+                    target.frame
+                );
+            }
+            None => {
+                // AX can't see this window (some apps hide windows from AX);
+                // activating the app is the best we can do.
+                tracing::info!("{}: no AX match for pid {}, activating app", dir.name(), target.pid);
+                ax::activate_pid(target.pid);
+            }
+        }
         Ok(())
     }
 }
