@@ -2,6 +2,7 @@
 name = "kevro"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 authors = ["Lenard0"]
 license = "MIT"
 description = "Keyboard-first window and app control for macOS: app hotkeys, window snapping and directional focus"

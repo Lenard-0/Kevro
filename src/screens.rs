@@ -31,8 +31,10 @@ pub fn all() -> Vec<Screen> {
         return Vec::new();
     };
     let screens = NSScreen::screens(mtm);
-    let rects: Vec<(Rect, Rect)> =
-        screens.iter().map(|s| (from_ns(s.frame()), from_ns(s.visibleFrame()))).collect();
+    let rects: Vec<(Rect, Rect)> = screens
+        .iter()
+        .map(|s| (from_ns(s.frame()), from_ns(s.visibleFrame())))
+        .collect();
     // The primary display is the one at the AppKit origin; NSScreen.screens
     // lists it first, but be defensive.
     let primary_height = rects
@@ -85,21 +87,30 @@ mod tests {
         let visible = Rect::new(0.0, 60.0, 1728.0, 1020.0);
         assert_eq!(appkit_to_ax(frame, PRIMARY_H), frame);
         // Visible area starts below the menu bar in AX coordinates.
-        assert_eq!(appkit_to_ax(visible, PRIMARY_H), Rect::new(0.0, 37.0, 1728.0, 1020.0));
+        assert_eq!(
+            appkit_to_ax(visible, PRIMARY_H),
+            Rect::new(0.0, 37.0, 1728.0, 1020.0)
+        );
     }
 
     #[test]
     fn external_screen_above_primary() {
         // A 2560x1440 display placed above the primary in Displays settings.
         let ext = Rect::new(-400.0, 1117.0, 2560.0, 1440.0);
-        assert_eq!(appkit_to_ax(ext, PRIMARY_H), Rect::new(-400.0, -1440.0, 2560.0, 1440.0));
+        assert_eq!(
+            appkit_to_ax(ext, PRIMARY_H),
+            Rect::new(-400.0, -1440.0, 2560.0, 1440.0)
+        );
     }
 
     #[test]
     fn external_screen_left_and_lower() {
         // A 1920x1080 display to the left, its bottom 200pt below the primary's.
         let ext = Rect::new(-1920.0, -200.0, 1920.0, 1080.0);
-        assert_eq!(appkit_to_ax(ext, PRIMARY_H), Rect::new(-1920.0, 237.0, 1920.0, 1080.0));
+        assert_eq!(
+            appkit_to_ax(ext, PRIMARY_H),
+            Rect::new(-1920.0, 237.0, 1920.0, 1080.0)
+        );
     }
 
     #[test]
@@ -112,19 +123,40 @@ mod tests {
     fn two_screens() -> Vec<Screen> {
         let a = Rect::new(0.0, 0.0, 1000.0, 800.0);
         let b = Rect::new(1000.0, 0.0, 1000.0, 800.0);
-        vec![Screen { frame: a, visible: a }, Screen { frame: b, visible: b }]
+        vec![
+            Screen {
+                frame: a,
+                visible: a,
+            },
+            Screen {
+                frame: b,
+                visible: b,
+            },
+        ]
     }
 
     #[test]
     fn screen_for_uses_centre_then_overlap() {
         let s = two_screens();
-        assert_eq!(screen_for(&Rect::new(100.0, 100.0, 200.0, 200.0), &s), Some(0));
+        assert_eq!(
+            screen_for(&Rect::new(100.0, 100.0, 200.0, 200.0), &s),
+            Some(0)
+        );
         // Centre at x=1050: second screen.
-        assert_eq!(screen_for(&Rect::new(800.0, 100.0, 500.0, 200.0), &s), Some(1));
+        assert_eq!(
+            screen_for(&Rect::new(800.0, 100.0, 500.0, 200.0), &s),
+            Some(1)
+        );
         // Centre off all screens (below), but overlapping the second more.
-        assert_eq!(screen_for(&Rect::new(1100.0, 700.0, 200.0, 400.0), &s), Some(1));
+        assert_eq!(
+            screen_for(&Rect::new(1100.0, 700.0, 200.0, 400.0), &s),
+            Some(1)
+        );
         // Entirely off-screen: primary.
-        assert_eq!(screen_for(&Rect::new(5000.0, 5000.0, 10.0, 10.0), &s), Some(0));
+        assert_eq!(
+            screen_for(&Rect::new(5000.0, 5000.0, 10.0, 10.0), &s),
+            Some(0)
+        );
         assert_eq!(screen_for(&Rect::default(), &[]), None);
     }
 }

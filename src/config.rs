@@ -28,7 +28,11 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Options { cycle_halves_to_thirds: false, gap: 0.0, hide_if_frontmost: false }
+        Options {
+            cycle_halves_to_thirds: false,
+            gap: 0.0,
+            hide_if_frontmost: false,
+        }
     }
 }
 
@@ -63,7 +67,10 @@ pub fn parse(text: &str) -> Result<Config, String> {
     let raw: RawConfig = toml::from_str(text).map_err(|e| e.to_string())?;
 
     if !raw.options.gap.is_finite() || raw.options.gap < 0.0 || raw.options.gap > 500.0 {
-        return Err(format!("options.gap must be between 0 and 500, got {}", raw.options.gap));
+        return Err(format!(
+            "options.gap must be between 0 and 500, got {}",
+            raw.options.gap
+        ));
     }
 
     let mut bindings = Vec::new();
@@ -86,10 +93,16 @@ pub fn parse(text: &str) -> Result<Config, String> {
             }
         };
         if let Some(prev) = seen.insert(hotkey.id(), key.to_string()) {
-            errors.push(format!("\"{key}\" is bound more than once (also \"{prev}\")"));
+            errors.push(format!(
+                "\"{key}\" is bound more than once (also \"{prev}\")"
+            ));
             return;
         }
-        bindings.push(Binding { key: key.to_string(), hotkey, action });
+        bindings.push(Binding {
+            key: key.to_string(),
+            hotkey,
+            action,
+        });
     };
 
     for (key, target) in &raw.apps {
@@ -116,7 +129,10 @@ pub fn parse(text: &str) -> Result<Config, String> {
     if !errors.is_empty() {
         return Err(errors.join("; "));
     }
-    Ok(Config { bindings, options: raw.options })
+    Ok(Config {
+        bindings,
+        options: raw.options,
+    })
 }
 
 pub fn config_dir() -> PathBuf {
@@ -132,7 +148,9 @@ pub fn log_dir() -> PathBuf {
 }
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp"))
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
 /// Write the commented default config if no config file exists yet.
@@ -165,7 +183,11 @@ mod tests {
     fn default_config_parses() {
         let cfg = parse(DEFAULT_CONFIG).expect("default config must parse");
         assert!(cfg.bindings.len() >= 15);
-        assert!(cfg.bindings.iter().any(|b| b.action == Action::Snap(SnapAction::Restore)));
+        assert!(
+            cfg.bindings
+                .iter()
+                .any(|b| b.action == Action::Snap(SnapAction::Restore))
+        );
     }
 
     #[test]

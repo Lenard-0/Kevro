@@ -6,12 +6,19 @@ use std::process::Command;
 pub const LABEL: &str = "io.github.lenard-0.kevro";
 
 pub fn plist_path() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join("Library").join("LaunchAgents").join(format!("{LABEL}.plist"))
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    home.join("Library")
+        .join("LaunchAgents")
+        .join(format!("{LABEL}.plist"))
 }
 
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// The LaunchAgent plist. `KeepAlive.SuccessfulExit = false` restarts Kevro
@@ -48,7 +55,10 @@ pub fn plist_contents(exe: &Path) -> String {
 }
 
 fn gui_domain() -> Result<String, String> {
-    let out = Command::new("/usr/bin/id").arg("-u").output().map_err(|e| e.to_string())?;
+    let out = Command::new("/usr/bin/id")
+        .arg("-u")
+        .output()
+        .map_err(|e| e.to_string())?;
     let uid = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if uid.is_empty() {
         return Err("could not determine user id".into());
@@ -57,7 +67,10 @@ fn gui_domain() -> Result<String, String> {
 }
 
 fn launchctl(args: &[&str]) -> Result<(), String> {
-    let out = Command::new("/bin/launchctl").args(args).output().map_err(|e| e.to_string())?;
+    let out = Command::new("/bin/launchctl")
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
     if out.status.success() {
         Ok(())
     } else {
@@ -88,7 +101,10 @@ pub fn install() -> Result<(), String> {
     launchctl(&["bootstrap", &domain, &path.to_string_lossy()])
         .map_err(|e| format!("launchctl bootstrap failed: {e}"))?;
     println!("Installed {}", path.display());
-    println!("Kevro will start at login (and has been started now) from {}", exe.display());
+    println!(
+        "Kevro will start at login (and has been started now) from {}",
+        exe.display()
+    );
     Ok(())
 }
 

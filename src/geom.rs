@@ -52,7 +52,12 @@ impl Rect {
     pub fn rounded(&self) -> Rect {
         let x = self.x.round();
         let y = self.y.round();
-        Rect { x, y, w: (self.right().round() - x).max(1.0), h: (self.bottom().round() - y).max(1.0) }
+        Rect {
+            x,
+            y,
+            w: (self.right().round() - x).max(1.0),
+            h: (self.bottom().round() - y).max(1.0),
+        }
     }
 }
 
@@ -72,7 +77,10 @@ mod tests {
     #[test]
     fn intersection() {
         let a = Rect::new(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(a.intersection_area(&Rect::new(50.0, 50.0, 100.0, 100.0)), 2500.0);
+        assert_eq!(
+            a.intersection_area(&Rect::new(50.0, 50.0, 100.0, 100.0)),
+            2500.0
+        );
         assert_eq!(a.intersection_area(&Rect::new(100.0, 0.0, 10.0, 10.0)), 0.0);
     }
 

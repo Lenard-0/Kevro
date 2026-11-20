@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 use objc2::rc::Retained;
-use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration};
+use objc2_app_kit::{
+    NSApplicationActivationOptions, NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration,
+};
 use objc2_foundation::{NSString, NSURL};
 
 /// Launch `target` (a bundle ID or app name) if it isn't running; otherwise
@@ -14,7 +16,9 @@ pub fn launch_or_focus(target: &str, hide_if_frontmost: bool) {
 
     if let Some(app) = find_running(&workspace, target) {
         let pid = app.processIdentifier();
-        let frontmost = workspace.frontmostApplication().map(|a| a.processIdentifier());
+        let frontmost = workspace
+            .frontmostApplication()
+            .map(|a| a.processIdentifier());
         if hide_if_frontmost && frontmost == Some(pid) {
             tracing::info!("{target} is frontmost, hiding it");
             app.hide();
@@ -43,22 +47,32 @@ pub fn launch_or_focus(target: &str, hide_if_frontmost: bool) {
 }
 
 fn find_running(workspace: &NSWorkspace, target: &str) -> Option<Retained<NSRunningApplication>> {
-    let by_id = NSRunningApplication::runningApplicationsWithBundleIdentifier(&NSString::from_str(target));
+    let by_id =
+        NSRunningApplication::runningApplicationsWithBundleIdentifier(&NSString::from_str(target));
     if let Some(app) = by_id.iter().find(|a| !a.isTerminated()) {
         return Some(app);
     }
     let wanted = target.trim_end_matches(".app").to_lowercase();
     workspace.runningApplications().iter().find(|a| {
-        !a.isTerminated() && a.localizedName().is_some_and(|n| n.to_string().to_lowercase() == wanted)
+        !a.isTerminated()
+            && a.localizedName()
+                .is_some_and(|n| n.to_string().to_lowercase() == wanted)
     })
 }
 
 fn find_app_url(workspace: &NSWorkspace, target: &str) -> Option<Retained<NSURL>> {
-    if let Some(url) = workspace.URLForApplicationWithBundleIdentifier(&NSString::from_str(target)) {
+    if let Some(url) = workspace.URLForApplicationWithBundleIdentifier(&NSString::from_str(target))
+    {
         return Some(url);
     }
-    let file = if target.ends_with(".app") { target.to_string() } else { format!("{target}.app") };
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let file = if target.ends_with(".app") {
+        target.to_string()
+    } else {
+        format!("{target}.app")
+    };
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
     [
         PathBuf::from("/Applications"),
         PathBuf::from("/Applications/Utilities"),
@@ -81,8 +95,16 @@ fn open_url(workspace: &NSWorkspace, url: &NSURL, target: &str) {
 
 /// Last resort: `open -a`, which also searches Spotlight for the app.
 fn open_with_command(target: &str) {
-    let flag = if target.contains('.') && !target.contains(' ') { "-b" } else { "-a" };
-    match std::process::Command::new("/usr/bin/open").arg(flag).arg(target).spawn() {
+    let flag = if target.contains('.') && !target.contains(' ') {
+        "-b"
+    } else {
+        "-a"
+    };
+    match std::process::Command::new("/usr/bin/open")
+        .arg(flag)
+        .arg(target)
+        .spawn()
+    {
         Ok(mut child) => {
             // Reap in the background so we don't leave a zombie process.
             let target = target.to_string();

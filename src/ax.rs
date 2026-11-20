@@ -105,7 +105,10 @@ impl Element {
         let mut out: *const CFType = ptr::null();
         // SAFETY: `out` is a valid out-pointer; on success AX returns a +1
         // retained CF object which we take ownership of.
-        let err = unsafe { self.el.copy_attribute_value(&attr(name), NonNull::from(&mut out)) };
+        let err = unsafe {
+            self.el
+                .copy_attribute_value(&attr(name), NonNull::from(&mut out))
+        };
         if err != AXError::Success {
             return Err(AxErr::Call(name, err.0));
         }
@@ -117,7 +120,11 @@ impl Element {
     fn set(&self, name: &'static str, value: &CFType) -> Result<(), AxErr> {
         // SAFETY: element and value are valid CF objects.
         let err = unsafe { self.el.set_attribute_value(&attr(name), value) };
-        if err == AXError::Success { Ok(()) } else { Err(AxErr::Call(name, err.0)) }
+        if err == AXError::Success {
+            Ok(())
+        } else {
+            Err(AxErr::Call(name, err.0))
+        }
     }
 
     fn child(&self, name: &'static str) -> Option<Element> {
@@ -127,11 +134,19 @@ impl Element {
     }
 
     pub fn string(&self, name: &'static str) -> Option<String> {
-        self.copy(name).ok()?.downcast::<CFString>().ok().map(|s| s.to_string())
+        self.copy(name)
+            .ok()?
+            .downcast::<CFString>()
+            .ok()
+            .map(|s| s.to_string())
     }
 
     fn bool(&self, name: &'static str) -> Option<bool> {
-        self.copy(name).ok()?.downcast::<CFBoolean>().ok().map(|b| b.as_bool())
+        self.copy(name)
+            .ok()?
+            .downcast::<CFBoolean>()
+            .ok()
+            .map(|b| b.as_bool())
     }
 
     fn ax_value<T: Default>(&self, name: &'static str, ty: AXValueType) -> Option<T> {
@@ -142,7 +157,12 @@ impl Element {
         ok.then_some(out)
     }
 
-    fn set_ax_value<T>(&self, name: &'static str, ty: AXValueType, mut value: T) -> Result<(), AxErr> {
+    fn set_ax_value<T>(
+        &self,
+        name: &'static str,
+        ty: AXValueType,
+        mut value: T,
+    ) -> Result<(), AxErr> {
         // SAFETY: `value` has the C layout matching `ty`; AXValueCreate copies it.
         let v = unsafe { AXValue::new(ty, NonNull::from(&mut value).cast::<c_void>()) }
             .ok_or(AxErr::Call(name, -1))?;
@@ -158,11 +178,22 @@ impl Element {
     }
 
     fn set_position(&self, r: &Rect) -> Result<(), AxErr> {
-        self.set_ax_value("AXPosition", AXValueType::CGPoint, CGPoint { x: r.x, y: r.y })
+        self.set_ax_value(
+            "AXPosition",
+            AXValueType::CGPoint,
+            CGPoint { x: r.x, y: r.y },
+        )
     }
 
     fn set_size(&self, r: &Rect) -> Result<(), AxErr> {
-        self.set_ax_value("AXSize", AXValueType::CGSize, CGSize { width: r.w, height: r.h })
+        self.set_ax_value(
+            "AXSize",
+            AXValueType::CGSize,
+            CGSize {
+                width: r.w,
+                height: r.h,
+            },
+        )
     }
 
     /// Move and resize the window. Uses size → position → size because many
@@ -175,7 +206,7 @@ impl Element {
         let app = Element::application(self.pid);
         let enhanced = app.bool("AXEnhancedUserInterface") == Some(true);
         if enhanced {
-            let _ = app.set("AXEnhancedUserInterface", &CFBoolean::new(false));
+            let _ = app.set("AXEnhancedUserInterface", CFBoolean::new(false));
         }
 
         let result = (|| {
@@ -186,7 +217,7 @@ impl Element {
         })();
 
         if enhanced {
-            let _ = app.set("AXEnhancedUserInterface", &CFBoolean::new(true));
+            let _ = app.set("AXEnhancedUserInterface", CFBoolean::new(true));
         }
         let actual = result?;
         if !actual.approx_eq(&target, SET_TOLERANCE) {
@@ -215,15 +246,19 @@ impl Element {
         if err != AXError::Success {
             tracing::debug!("AXRaise failed: {}", err.0);
         }
-        let _ = self.set("AXMain", &CFBoolean::new(true));
+        let _ = self.set("AXMain", CFBoolean::new(true));
     }
 
     // ---- Apps ------------------------------------------------------------
 
     /// All windows of this app element.
     pub fn windows(&self) -> Vec<Window> {
-        let Ok(v) = self.copy("AXWindows") else { return Vec::new() };
-        let Ok(arr) = v.downcast::<CFArray>() else { return Vec::new() };
+        let Ok(v) = self.copy("AXWindows") else {
+            return Vec::new();
+        };
+        let Ok(arr) = v.downcast::<CFArray>() else {
+            return Vec::new();
+        };
         // SAFETY: AXWindows is documented as an array of AXUIElements.
         let arr = unsafe { arr.cast_unchecked::<AXUIElement>() };
         arr.iter().map(|el| Element { el, pid: self.pid }).collect()
@@ -242,7 +277,11 @@ pub fn focused_window() -> Result<Window, AxErr> {
     let app = Element::application(pid);
     app.child("AXFocusedWindow")
         .or_else(|| app.child("AXMainWindow"))
-        .or_else(|| app.windows().into_iter().find(|w| w.is_standard() && !w.is_minimized()))
+        .or_else(|| {
+            app.windows()
+                .into_iter()
+                .find(|w| w.is_standard() && !w.is_minimized())
+        })
         .ok_or(AxErr::NoFocusedWindow)
 }
 
@@ -290,7 +329,8 @@ pub fn onscreen_windows() -> Vec<CgWindow> {
                 return None;
             }
             let frame = Rect::new(r.origin.x, r.origin.y, r.size.width, r.size.height);
-            (frame.w >= MIN_WINDOW_SIDE && frame.h >= MIN_WINDOW_SIDE).then_some(CgWindow { pid, frame })
+            (frame.w >= MIN_WINDOW_SIDE && frame.h >= MIN_WINDOW_SIDE)
+                .then_some(CgWindow { pid, frame })
         })
         .collect()
 }
@@ -317,10 +357,12 @@ pub fn ax_window_for(cg: &CgWindow) -> Option<Window> {
 pub fn activate_pid(pid: i32) {
     // Setting AXFrontmost activates the app via Accessibility, which isn't
     // subject to the cooperative-activation limits on NSRunningApplication.
-    if let Err(e) = Element::application(pid).set("AXFrontmost", &CFBoolean::new(true)) {
+    if let Err(e) = Element::application(pid).set("AXFrontmost", CFBoolean::new(true)) {
         tracing::debug!("AXFrontmost failed: {e}");
     }
-    if let Some(app) = objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
+    if let Some(app) =
+        objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+    {
         app.activateWithOptions(objc2_app_kit::NSApplicationActivationOptions::empty());
     }
 }

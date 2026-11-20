@@ -90,7 +90,12 @@ pub fn target_frame(action: SnapAction, visible: Rect, current: Rect, gap: f64) 
     if action == SnapAction::Center {
         let w = current.w.min(visible.w - 2.0 * gap).max(1.0);
         let h = current.h.min(visible.h - 2.0 * gap).max(1.0);
-        let r = Rect::new(visible.x + (visible.w - w) / 2.0, visible.y + (visible.h - h) / 2.0, w, h);
+        let r = Rect::new(
+            visible.x + (visible.w - w) / 2.0,
+            visible.y + (visible.h - h) / 2.0,
+            w,
+            h,
+        );
         return Some(r.rounded());
     }
     let (fx, fy, fw, fh) = fractions(action)?;
@@ -146,10 +151,22 @@ mod tests {
 
     #[test]
     fn halves() {
-        assert_eq!(t(SnapAction::LeftHalf, 0.0), Rect::new(0.0, 37.0, 864.0, 1020.0));
-        assert_eq!(t(SnapAction::RightHalf, 0.0), Rect::new(864.0, 37.0, 864.0, 1020.0));
-        assert_eq!(t(SnapAction::TopHalf, 0.0), Rect::new(0.0, 37.0, 1728.0, 510.0));
-        assert_eq!(t(SnapAction::BottomHalf, 0.0), Rect::new(0.0, 547.0, 1728.0, 510.0));
+        assert_eq!(
+            t(SnapAction::LeftHalf, 0.0),
+            Rect::new(0.0, 37.0, 864.0, 1020.0)
+        );
+        assert_eq!(
+            t(SnapAction::RightHalf, 0.0),
+            Rect::new(864.0, 37.0, 864.0, 1020.0)
+        );
+        assert_eq!(
+            t(SnapAction::TopHalf, 0.0),
+            Rect::new(0.0, 37.0, 1728.0, 510.0)
+        );
+        assert_eq!(
+            t(SnapAction::BottomHalf, 0.0),
+            Rect::new(0.0, 547.0, 1728.0, 510.0)
+        );
         assert_eq!(t(SnapAction::Maximize, 0.0), VIS);
     }
 
@@ -162,8 +179,14 @@ mod tests {
         assert_eq!(a.right(), b.x);
         assert_eq!(b.right(), c.x);
         assert_eq!(c.right(), VIS.right());
-        assert_eq!(t(SnapAction::FirstTwoThirds, 0.0), Rect::new(0.0, 37.0, 1152.0, 1020.0));
-        assert_eq!(t(SnapAction::LastTwoThirds, 0.0), Rect::new(576.0, 37.0, 1152.0, 1020.0));
+        assert_eq!(
+            t(SnapAction::FirstTwoThirds, 0.0),
+            Rect::new(0.0, 37.0, 1152.0, 1020.0)
+        );
+        assert_eq!(
+            t(SnapAction::LastTwoThirds, 0.0),
+            Rect::new(576.0, 37.0, 1152.0, 1020.0)
+        );
     }
 
     #[test]
@@ -184,7 +207,10 @@ mod tests {
         assert_eq!(l, Rect::new(10.0, 47.0, 849.0, 1000.0));
         assert_eq!(r.x - l.right(), 10.0);
         assert_eq!(VIS.right() - r.right(), 10.0);
-        assert_eq!(t(SnapAction::Maximize, 8.0), Rect::new(8.0, 45.0, 1712.0, 1004.0));
+        assert_eq!(
+            t(SnapAction::Maximize, 8.0),
+            Rect::new(8.0, 45.0, 1712.0, 1004.0)
+        );
     }
 
     #[test]
@@ -193,7 +219,10 @@ mod tests {
         assert_eq!((c.w, c.h), (800.0, 600.0));
         assert_eq!(c, Rect::new(464.0, 247.0, 800.0, 600.0));
         let huge = Rect::new(0.0, 0.0, 5000.0, 5000.0);
-        assert_eq!(target_frame(SnapAction::Center, VIS, huge, 0.0).unwrap(), VIS);
+        assert_eq!(
+            target_frame(SnapAction::Center, VIS, huge, 0.0).unwrap(),
+            VIS
+        );
     }
 
     #[test]
@@ -206,7 +235,10 @@ mod tests {
         use SnapAction::*;
         assert_eq!(cycle(LeftHalf, VIS, WIN, 0.0), LeftHalf);
         assert_eq!(cycle(LeftHalf, VIS, t(LeftHalf, 0.0), 0.0), FirstThird);
-        assert_eq!(cycle(LeftHalf, VIS, t(FirstThird, 0.0), 0.0), FirstTwoThirds);
+        assert_eq!(
+            cycle(LeftHalf, VIS, t(FirstThird, 0.0), 0.0),
+            FirstTwoThirds
+        );
         assert_eq!(cycle(LeftHalf, VIS, t(FirstTwoThirds, 0.0), 0.0), LeftHalf);
         assert_eq!(cycle(RightHalf, VIS, t(RightHalf, 0.0), 0.0), LastThird);
         assert_eq!(cycle(RightHalf, VIS, t(LastThird, 0.0), 0.0), LastTwoThirds);

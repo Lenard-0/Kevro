@@ -53,7 +53,11 @@ impl WindowRegistry {
                 if self.entries.len() >= MAX_ENTRIES {
                     self.entries.remove(0);
                 }
-                self.entries.push(Entry { window: window.clone(), pre_snap: before, last_set: after });
+                self.entries.push(Entry {
+                    window: window.clone(),
+                    pre_snap: before,
+                    last_set: after,
+                });
             }
         }
     }

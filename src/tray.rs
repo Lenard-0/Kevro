@@ -61,11 +61,19 @@ impl Tray {
             .build()
             .map_err(|e| e.to_string())?;
 
-        Ok(Tray { _icon: tray, accessibility, trusted: None, ids })
+        Ok(Tray {
+            _icon: tray,
+            accessibility,
+            trusted: None,
+            ids,
+        })
     }
 
     pub fn action_for(&self, event: &MenuEvent) -> Option<MenuAction> {
-        self.ids.iter().find(|(id, _)| *id == event.id).map(|(_, a)| *a)
+        self.ids
+            .iter()
+            .find(|(id, _)| *id == event.id)
+            .map(|(_, a)| *a)
     }
 
     /// Update the Accessibility line. Cheap to call often.
@@ -78,7 +86,8 @@ impl Tray {
             self.accessibility.set_text("Accessibility: granted ✓");
             self.accessibility.set_enabled(false);
         } else {
-            self.accessibility.set_text("Accessibility: not granted (click to fix)…");
+            self.accessibility
+                .set_text("Accessibility: not granted (click to fix)…");
             self.accessibility.set_enabled(true);
         }
     }

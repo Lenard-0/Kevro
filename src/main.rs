@@ -56,7 +56,12 @@ Commands:
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let _log_guard = init_logging();
-    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
         [] => {
             tracing::info!("Kevro {} starting", env!("CARGO_PKG_VERSION"));
             run();
@@ -78,7 +83,10 @@ fn main() {
         ["uninstall"] => exit_on_err(login::uninstall()),
         ["windows"] => {
             for w in ax::onscreen_windows() {
-                let name = objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(w.pid)
+                let name =
+                    objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(
+                        w.pid,
+                    )
                     .and_then(|a| a.localizedName())
                     .map(|n| n.to_string())
                     .unwrap_or_default();
@@ -103,38 +111,65 @@ fn exit_on_err(r: Result<(), String>) {
 fn print_status() {
     let trusted = ax::is_trusted();
     println!("Kevro {}", env!("CARGO_PKG_VERSION"));
-    println!("Executable:    {}", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default());
+    println!(
+        "Executable:    {}",
+        std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    );
     println!(
         "Accessibility: {}",
-        if trusted { "granted" } else { "NOT granted (snapping and focus disabled)" }
+        if trusted {
+            "granted"
+        } else {
+            "NOT granted (snapping and focus disabled)"
+        }
     );
     println!("Config:        {}", config::config_path().display());
     match config::load() {
         Ok(c) => println!("               valid, {} bindings", c.bindings.len()),
         Err(e) => println!("               ERROR: {e}"),
     }
-    println!("Log:           {}", config::log_dir().join("kevro.log").display());
+    println!(
+        "Log:           {}",
+        config::log_dir().join("kevro.log").display()
+    );
     let agent = login::plist_path();
     println!(
         "Login item:    {}",
-        if agent.exists() { format!("installed ({})", agent.display()) } else { "not installed".into() }
+        if agent.exists() {
+            format!("installed ({})", agent.display())
+        } else {
+            "not installed".into()
+        }
     );
     for (i, s) in screens::all().iter().enumerate() {
-        println!("Screen {i}:      frame {:?}\n               visible {:?}", s.frame, s.visible);
+        println!(
+            "Screen {i}:      frame {:?}\n               visible {:?}",
+            s.frame, s.visible
+        );
     }
 }
 
 fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let filter = || EnvFilter::try_from_env("KEVRO_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
-    let stderr = fmt::layer().with_writer(std::io::stderr).with_filter(filter());
+    let stderr = fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_filter(filter());
 
     let dir = config::log_dir();
     match std::fs::create_dir_all(&dir) {
         Ok(()) => {
             let appender = tracing_appender::rolling::never(&dir, "kevro.log");
             let (writer, guard) = tracing_appender::non_blocking(appender);
-            let file = fmt::layer().with_ansi(false).with_writer(writer).with_filter(filter());
-            tracing_subscriber::registry().with(stderr).with(file).init();
+            let file = fmt::layer()
+                .with_ansi(false)
+                .with_writer(writer)
+                .with_filter(filter());
+            tracing_subscriber::registry()
+                .with(stderr)
+                .with(file)
+                .init();
             Some(guard)
         }
         Err(e) => {
@@ -180,7 +215,9 @@ impl App {
     }
 
     fn on_menu(&mut self, event: MenuEvent) {
-        let Some(action) = self.tray.as_ref().and_then(|t| t.action_for(&event)) else { return };
+        let Some(action) = self.tray.as_ref().and_then(|t| t.action_for(&event)) else {
+            return;
+        };
         match action {
             MenuAction::Accessibility => open(&[tray::SETTINGS_URL]),
             MenuAction::Reload => {
@@ -208,7 +245,9 @@ impl App {
         if event.state != HotKeyState::Pressed {
             return;
         }
-        let Some((key, action)) = self.hotkeys.lookup(event.id) else { return };
+        let Some((key, action)) = self.hotkeys.lookup(event.id) else {
+            return;
+        };
         tracing::info!("hotkey {key} -> {action}");
         let action = action.clone();
         self.dispatcher.dispatch(&action, &self.config.options);
@@ -216,7 +255,10 @@ impl App {
 }
 
 fn open(args: &[&str]) {
-    if let Err(e) = std::process::Command::new("/usr/bin/open").args(args).spawn() {
+    if let Err(e) = std::process::Command::new("/usr/bin/open")
+        .args(args)
+        .spawn()
+    {
         tracing::warn!("open {args:?} failed: {e}");
     }
 }
@@ -228,8 +270,14 @@ fn exit_if_already_running() {
     let others = objc2_app_kit::NSRunningApplication::runningApplicationsWithBundleIdentifier(
         &objc2_foundation::NSString::from_str(login::LABEL),
     );
-    if let Some(other) = others.iter().find(|a| a.processIdentifier() != own && !a.isTerminated()) {
-        tracing::info!("Kevro is already running (pid {}), exiting", other.processIdentifier());
+    if let Some(other) = others
+        .iter()
+        .find(|a| a.processIdentifier() != own && !a.isTerminated())
+    {
+        tracing::info!(
+            "Kevro is already running (pid {}), exiting",
+            other.processIdentifier()
+        );
         std::process::exit(0);
     }
 }
@@ -251,7 +299,10 @@ fn run() -> ! {
     }));
 
     match config::ensure_config_file() {
-        Ok(true) => tracing::info!("wrote default config to {}", config::config_path().display()),
+        Ok(true) => tracing::info!(
+            "wrote default config to {}",
+            config::config_path().display()
+        ),
         Ok(false) => {}
         Err(e) => tracing::error!("cannot write default config: {e}"),
     }

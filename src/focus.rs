@@ -21,9 +21,14 @@ impl Direction {
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
-        [Direction::Left, Direction::Right, Direction::Up, Direction::Down]
-            .into_iter()
-            .find(|d| d.name() == name)
+        [
+            Direction::Left,
+            Direction::Right,
+            Direction::Up,
+            Direction::Down,
+        ]
+        .into_iter()
+        .find(|d| d.name() == name)
     }
 }
 
@@ -58,12 +63,15 @@ pub fn pick(from: Rect, dir: Direction, candidates: &[Rect]) -> Option<usize> {
             };
             let in_line = perp == 0.0;
             (progress >= MIN_PROGRESS)
-                .then(|| (i, (!in_line, progress + PERPENDICULAR_WEIGHT * perp)))
+                .then_some((i, (!in_line, progress + PERPENDICULAR_WEIGHT * perp)))
         })
-        .fold(None, |best: Option<(usize, (bool, f64))>, (i, score)| match best {
-            Some((_, s)) if s <= score => best,
-            _ => Some((i, score)),
-        })
+        .fold(
+            None,
+            |best: Option<(usize, (bool, f64))>, (i, score)| match best {
+                Some((_, s)) if s <= score => best,
+                _ => Some((i, score)),
+            },
+        )
         .map(|(i, _)| i)
 }
 
@@ -82,7 +90,12 @@ mod tests {
 
     #[test]
     fn names_round_trip() {
-        for d in [Direction::Left, Direction::Right, Direction::Up, Direction::Down] {
+        for d in [
+            Direction::Left,
+            Direction::Right,
+            Direction::Up,
+            Direction::Down,
+        ] {
             assert_eq!(Direction::from_name(d.name()), Some(d));
         }
     }
@@ -107,7 +120,10 @@ mod tests {
         let from = r(0.0, 400.0, 400.0, 200.0);
         let diagonal_near = r(450.0, 0.0, 300.0, 200.0); // up and right
         let in_line_far = r(900.0, 380.0, 300.0, 250.0); // straight right
-        assert_eq!(pick(from, Direction::Right, &[diagonal_near, in_line_far]), Some(1));
+        assert_eq!(
+            pick(from, Direction::Right, &[diagonal_near, in_line_far]),
+            Some(1)
+        );
     }
 
     #[test]

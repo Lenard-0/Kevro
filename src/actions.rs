@@ -40,7 +40,10 @@ impl Action {
         if let Some(target) = spec.strip_prefix("app:") {
             return Ok(Action::App(target.to_string()));
         }
-        let name = spec.strip_prefix("snap:").or_else(|| spec.strip_prefix("focus:")).unwrap_or(spec);
+        let name = spec
+            .strip_prefix("snap:")
+            .or_else(|| spec.strip_prefix("focus:"))
+            .unwrap_or(spec);
         SnapAction::from_name(name)
             .map(Action::Snap)
             .or_else(|| Direction::from_name(name).map(Action::Focus))
@@ -85,7 +88,9 @@ impl Dispatcher {
              Security → Accessibility, then try again. App hotkeys keep working without it."
         );
         beep();
-        let due = self.last_prompt.is_none_or(|t| t.elapsed() >= PROMPT_INTERVAL);
+        let due = self
+            .last_prompt
+            .is_none_or(|t| t.elapsed() >= PROMPT_INTERVAL);
         if due {
             self.last_prompt = Some(Instant::now());
             // Shows macOS's own dialog with an "Open System Settings" button.
@@ -166,7 +171,11 @@ impl Dispatcher {
             None => {
                 // AX can't see this window (some apps hide windows from AX);
                 // activating the app is the best we can do.
-                tracing::info!("{}: no AX match for pid {}, activating app", dir.name(), target.pid);
+                tracing::info!(
+                    "{}: no AX match for pid {}, activating app",
+                    dir.name(),
+                    target.pid
+                );
                 ax::activate_pid(target.pid);
             }
         }

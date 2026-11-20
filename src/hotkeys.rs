@@ -16,7 +16,10 @@ pub struct Hotkeys {
 impl Hotkeys {
     pub fn new() -> Result<Self, String> {
         let manager = GlobalHotKeyManager::new().map_err(|e| e.to_string())?;
-        Ok(Hotkeys { manager, active: HashMap::new() })
+        Ok(Hotkeys {
+            manager,
+            active: HashMap::new(),
+        })
     }
 
     /// Replace all registered hotkeys with `bindings`. Keys that fail to
@@ -31,7 +34,8 @@ impl Hotkeys {
         for binding in bindings {
             match self.manager.register(binding.hotkey) {
                 Ok(()) => {
-                    self.active.insert(binding.hotkey.id(), (binding.hotkey, binding.clone()));
+                    self.active
+                        .insert(binding.hotkey.id(), (binding.hotkey, binding.clone()));
                 }
                 Err(e) => tracing::warn!(
                     "hotkey \"{}\" ({}) could not be registered, probably because another app \
@@ -45,6 +49,8 @@ impl Hotkeys {
     }
 
     pub fn lookup(&self, id: u32) -> Option<(&str, &Action)> {
-        self.active.get(&id).map(|(_, b)| (b.key.as_str(), &b.action))
+        self.active
+            .get(&id)
+            .map(|(_, b)| (b.key.as_str(), &b.action))
     }
 }
