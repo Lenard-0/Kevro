@@ -1,0 +1,14 @@
+# Rust build output
+/target/
+**/*.rs.bk
+
+# Bundled app output
+/dist/
+*.app/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
