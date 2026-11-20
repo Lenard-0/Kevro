@@ -7,12 +7,15 @@ Kevro is a small menu-bar utility that lets you:
 - **Launch or focus any app** with one hotkey
 - **Snap the focused window** to halves, thirds, two-thirds, maximize or centre, and restore it
 - **Move focus between windows by direction**, across apps and displays
+- **Move or swap windows by direction**, including between displays
+- **Cycle a window through your own list of layouts**
+- **Per-app rules**, e.g. "Warp always opens on the right half"
 
 Everything is configured in one TOML file. Kevro uses only public macOS APIs
 (Accessibility, AppKit, CoreGraphics and Carbon hotkeys). It needs no SIP
 changes, has no Dock icon, and idles at about 0% CPU.
 
-> Status: Phase 1. See [`ROADMAP.md`](ROADMAP.md) for what's next and
+> Status: Phases 1 and 2. See [`ROADMAP.md`](ROADMAP.md) for what's next and
 > [`docs/BRIEF.md`](docs/BRIEF.md) for the original design brief.
 
 ## Requirements
@@ -76,6 +79,10 @@ starts Kevro. launchd restarts Kevro if it crashes, but not after you choose
 | `⌃⌥D` / `⌃⌥F` / `⌃⌥G` | First / centre / last third |
 | `⌃⌥E` / `⌃⌥T` | First / last two-thirds |
 | `⌃⌥⌘←` `→` `↑` `↓` | Focus the nearest window in that direction |
+| `⌃⌥⇧←` / `⌃⌥⇧→` | Move the window to the left/right screen edge; again to jump to the next display |
+| `⌃⌥⌘⇧←` `→` `↑` `↓` | Swap the window with the nearest window in that direction |
+
+Layout cycles and per-app rules have no defaults; see the examples below.
 
 The defaults leave `⌃←/→/↑/↓` (Spaces, Mission Control, App Exposé),
 `⌘⌥←/→` (Chrome and VS Code tab switching), `⌃`` ` (VS Code terminal) and
@@ -105,6 +112,17 @@ to the log.
 [focus]                      # focus nearest window in a direction
 "ctrl+alt+cmd+left" = "focus_left"
 
+[move]                       # move/swap the focused window
+"ctrl+alt+shift+left" = "move_left"         # slide to edge, then next display
+"ctrl+alt+cmd+shift+left" = "swap_left"     # trade places with the window there
+
+[cycle]                      # each press: next layout in the list
+"ctrl+alt+s" = ["left_half", "center_third", "right_half"]
+
+[[rules]]                    # new windows of this app open in this layout
+app = "dev.warp.Warp-Stable"
+layout = "right_half"
+
 [options]
 cycle_halves_to_thirds = false  # repeat left/right half: ½ → ⅓ → ⅔
 gap = 0                         # points between windows and screen edges
@@ -120,6 +138,18 @@ hide_if_frontmost = false       # app hotkey hides the app if already in front
   `maximize`, `center`, `first_third`, `center_third`, `last_third`,
   `first_two_thirds`, `last_two_thirds`, `restore`.
 - **Focus actions:** `focus_left`, `focus_right`, `focus_up`, `focus_down`.
+- **Move actions:** `move_left`/`right`/`up`/`down` and `swap_left`/`right`/`up`/`down`.
+  A window moved to another display keeps its proportions, so a left half stays a left half.
+- **Cycles:** a list of snap actions (not `restore`). If the window isn't in
+  any of them yet, the first is used.
+- **Rules:** `app` is a bundle ID or name; `layout` is any snap action except
+  `restore`. Only standard windows are touched (not dialogs, sheets or
+  palettes). Rules apply to windows created while Kevro is running, including
+  the first windows of an app launched after Kevro.
+
+> **Upgrading:** Kevro only writes the default config if you don't have one,
+> so an existing config won't gain the `[move]` bindings. Copy them from
+> [`config/default.toml`](config/default.toml) if you want them.
 - **Finding a bundle ID:** `osascript -e 'id of app "Visual Studio Code"'`
 
 Snapping uses the visible area (excluding the menu bar and Dock) of the
@@ -136,7 +166,7 @@ when built with Cargo.
 | `kevro` | Run Kevro (what the app and login item do) |
 | `kevro status` | Accessibility, config validity, login item and display layout |
 | `kevro windows` | On-screen windows as Kevro sees them |
-| `kevro action <name>` | Run one action and exit, e.g. `snap:left_half`, `focus:focus_right`, `app:Safari` |
+| `kevro action <name>` | Run one action and exit, e.g. `snap:left_half`, `focus:focus_right`, `move:left`, `swap:right`, `cycle:left_half,right_half`, `app:Safari` |
 | `kevro install` / `uninstall` | Add or remove the login item |
 
 Logs are written to `~/Library/Logs/kevro/kevro.log` (menu: **Open Log**).
@@ -191,6 +221,12 @@ Accessibility. `kevro windows` shows what Kevro can see.
   (`focus.rs`) and coordinate conversion (`screens.rs`) are pure and
   unit-tested (`cargo test`). All `unsafe` FFI is in `ax.rs`, `apps.rs` and
   `screens.rs`. `registry.rs` is where Phase 3 workspaces will plug in.
+- **Per-app rules** use an `AXObserver` per matching app (window-created
+  events) and NSWorkspace launch/quit notifications, so nothing is polled per
+  window. New windows are laid out 150 ms after they appear, which lets the
+  app finish placing them first. Phase 3 will build on the same observer.
+- Set `KEVRO_NO_PROMPT=1` to stop Kevro from showing the Accessibility dialog
+  (useful for headless test runs).
 
 ## License
 

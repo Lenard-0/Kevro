@@ -6,8 +6,8 @@ is in [`docs/BRIEF.md`](docs/BRIEF.md).
 
 | Phase | Features | Difficulty | Status |
 |---|---|---|---|
-| **1** | App hotkeys (launch/focus), window snapping, focus window by direction | Easy, about a weekend | Built, being tested |
-| 2 | Move/swap windows by direction, cycling layouts, per-app rules (e.g. "Warp always opens on the right half") | Easy–medium | Not started |
+| **1** | App hotkeys (launch/focus), window snapping, focus window by direction | Easy, about a weekend | Built, awaiting hands-on testing |
+| 2 | Move/swap windows by direction, cycling layouts, per-app rules (e.g. "Warp always opens on the right half") | Easy–medium | Built, awaiting hands-on testing |
 | 3 | **AeroSpace-style virtual workspaces**: windows on "hidden" workspaces are moved off-screen to a corner, and switching moves them back. Hotkeys to jump to a workspace and send a window to a workspace. Apps auto-assigned to workspaces. | Medium. Weeks, plus ongoing edge-case fixing | Not started |
 | ✗ | **Native macOS Spaces control** (reordering Spaces, moving windows between real desktops, as yabai does) | Needs private APIs, code injected into Dock and SIP partly disabled. It breaks with most macOS updates. | **Never** |
 
@@ -20,7 +20,10 @@ is in [`docs/BRIEF.md`](docs/BRIEF.md).
 - Crash safety: persisting state so windows are never stranded off-screen
   (e.g. a "restore all windows" command and recovery on startup)
 
-`src/registry.rs` (`WindowRegistry`) is the seam for this: it should become
+Phase 2 already added a window-created `AXObserver` (`ax::WindowObserver`,
+used by `src/rules.rs`), which Phase 3 can extend with destroyed, moved and
+minimised notifications. `src/registry.rs` (`WindowRegistry`) is the seam for
+the rest: it should become
 the single source of truth for window state, fed by AXObserver and persisted
 to disk.
 
