@@ -1,5 +1,6 @@
 //! Snap actions and layout maths. Pure functions only: no macOS calls.
 
+use crate::focus::{self, Direction};
 use crate::geom::Rect;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -114,11 +115,26 @@ pub fn target_frame(action: SnapAction, visible: Rect, current: Rect, gap: f64) 
 /// ½ → ⅓ → ⅔ → ½. Any other action is returned unchanged.
 pub fn cycle(action: SnapAction, visible: Rect, current: Rect, gap: f64) -> SnapAction {
     use SnapAction::*;
-    let steps: &[SnapAction] = match action {
-        LeftHalf => &[LeftHalf, FirstThird, FirstTwoThirds],
-        RightHalf => &[RightHalf, LastThird, LastTwoThirds],
-        _ => return action,
-    };
+    match action {
+        LeftHalf => next_in_cycle(
+            &[LeftHalf, FirstThird, FirstTwoThirds],
+            visible,
+            current,
+            gap,
+        ),
+        RightHalf => next_in_cycle(
+            &[RightHalf, LastThird, LastTwoThirds],
+            visible,
+            current,
+            gap,
+        ),
+        _ => action,
+    }
+}
+
+/// The layout after the one the window is currently in. If the window isn't
+/// in any of `steps`, the first step. `steps` must not be empty.
+pub fn next_in_cycle(steps: &[SnapAction], visible: Rect, current: Rect, gap: f64) -> SnapAction {
     for (i, step) in steps.iter().enumerate() {
         if let Some(frame) = target_frame(*step, visible, current, gap)
             && frame.approx_eq(&current, MATCH_TOLERANCE)
@@ -126,7 +142,71 @@ pub fn cycle(action: SnapAction, visible: Rect, current: Rect, gap: f64) -> Snap
             return steps[(i + 1) % steps.len()];
         }
     }
-    action
+    steps[0]
+}
+
+/// Within this many points of an edge counts as "already at the edge".
+const EDGE_TOLERANCE: f64 = 2.0;
+
+/// Where `move_<dir>` puts a window.
+///
+/// If the window isn't touching that edge of its screen's visible area (plus
+/// `gap`), it slides there, keeping its size. If it already is, it moves to
+/// the next display in that direction, keeping its position and size as
+/// proportions of the visible area (so a left-half window stays a left half).
+/// Returns `None` if it's at the edge and there's no display beyond.
+///
+/// `visibles` are the visible areas of all screens; `cur` is the window's.
+pub fn move_toward(
+    dir: Direction,
+    current: Rect,
+    visibles: &[Rect],
+    cur: usize,
+    gap: f64,
+) -> Option<Rect> {
+    let vis = *visibles.get(cur)?;
+    let w = current.w.min(vis.w - 2.0 * gap).max(1.0);
+    let h = current.h.min(vis.h - 2.0 * gap).max(1.0);
+    let (left, right) = (vis.x + gap, vis.right() - gap);
+    let (top, bottom) = (vis.y + gap, vis.bottom() - gap);
+    let near = |a: f64, b: f64| (a - b).abs() <= EDGE_TOLERANCE;
+
+    let slid = match dir {
+        Direction::Left => (!near(current.x, left)).then(|| Rect::new(left, current.y, w, h)),
+        Direction::Right => {
+            (!near(current.right(), right)).then(|| Rect::new(right - w, current.y, w, h))
+        }
+        Direction::Up => (!near(current.y, top)).then(|| Rect::new(current.x, top, w, h)),
+        Direction::Down => {
+            (!near(current.bottom(), bottom)).then(|| Rect::new(current.x, bottom - h, w, h))
+        }
+    };
+    if let Some(r) = slid {
+        return Some(r.rounded());
+    }
+
+    // At the edge: hop to the adjacent display, if any.
+    let others: Vec<Rect> = visibles
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != cur)
+        .map(|(_, r)| *r)
+        .collect();
+    let next = others[focus::pick(vis, dir, &others)?];
+    let sx = next.w / vis.w;
+    let sy = next.h / vis.h;
+    let r = Rect::new(
+        next.x + (current.x - vis.x) * sx,
+        next.y + (current.y - vis.y) * sy,
+        current.w * sx,
+        current.h * sy,
+    );
+    // Keep it fully on the new display.
+    let w = r.w.min(next.w);
+    let h = r.h.min(next.h);
+    let x = r.x.clamp(next.x, next.right() - w);
+    let y = r.y.clamp(next.y, next.bottom() - h);
+    Some(Rect::new(x, y, w, h).rounded())
 }
 
 #[cfg(test)]
@@ -247,5 +327,75 @@ mod tests {
         almost.w -= 7.0;
         assert_eq!(cycle(LeftHalf, VIS, almost, 0.0), FirstThird);
         assert_eq!(cycle(Maximize, VIS, VIS, 0.0), Maximize);
+    }
+
+    #[test]
+    fn custom_cycle() {
+        use SnapAction::*;
+        let steps = [LeftHalf, CenterThird, RightHalf];
+        // Not in any step: first.
+        assert_eq!(next_in_cycle(&steps, VIS, WIN, 0.0), LeftHalf);
+        assert_eq!(
+            next_in_cycle(&steps, VIS, t(LeftHalf, 0.0), 0.0),
+            CenterThird
+        );
+        assert_eq!(
+            next_in_cycle(&steps, VIS, t(CenterThird, 0.0), 0.0),
+            RightHalf
+        );
+        assert_eq!(next_in_cycle(&steps, VIS, t(RightHalf, 0.0), 0.0), LeftHalf);
+        assert_eq!(next_in_cycle(&[Maximize], VIS, VIS, 0.0), Maximize);
+    }
+
+    // Primary (as in VIS) plus an external display to its right, lower and bigger.
+    const EXT: Rect = Rect::new(1728.0, 0.0, 2560.0, 1415.0);
+
+    #[test]
+    fn move_slides_to_edge_first() {
+        let v = [VIS, EXT];
+        assert_eq!(
+            move_toward(Direction::Left, WIN, &v, 0, 0.0),
+            Some(Rect::new(0.0, 100.0, 800.0, 600.0))
+        );
+        assert_eq!(
+            move_toward(Direction::Right, WIN, &v, 0, 0.0),
+            Some(Rect::new(928.0, 100.0, 800.0, 600.0))
+        );
+        assert_eq!(
+            move_toward(Direction::Up, WIN, &v, 0, 0.0),
+            Some(Rect::new(100.0, 37.0, 800.0, 600.0))
+        );
+        assert_eq!(
+            move_toward(Direction::Down, WIN, &v, 0, 10.0),
+            Some(Rect::new(100.0, 447.0, 800.0, 600.0))
+        );
+    }
+
+    #[test]
+    fn move_at_edge_hops_display_proportionally() {
+        let v = [VIS, EXT];
+        let right_half = t(SnapAction::RightHalf, 0.0);
+        let moved = move_toward(Direction::Right, right_half, &v, 0, 0.0).unwrap();
+        // Right half of the primary becomes the right half of the external.
+        assert_eq!(moved, Rect::new(3008.0, 0.0, 1280.0, 1415.0));
+        // And back again.
+        let back = move_toward(
+            Direction::Left,
+            Rect::new(1728.0, 0.0, 1280.0, 1415.0),
+            &v,
+            1,
+            0.0,
+        );
+        assert_eq!(back, Some(Rect::new(0.0, 37.0, 864.0, 1020.0)));
+    }
+
+    #[test]
+    fn move_at_edge_without_display_is_none() {
+        let left_half = t(SnapAction::LeftHalf, 0.0);
+        assert_eq!(
+            move_toward(Direction::Left, left_half, &[VIS, EXT], 0, 0.0),
+            None
+        );
+        assert_eq!(move_toward(Direction::Up, VIS, &[VIS], 0, 0.0), None);
     }
 }

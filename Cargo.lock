@@ -856,6 +856,7 @@ dependencies = [
 name = "kevro"
 version = "0.1.0"
 dependencies = [
+ "block2",
  "global-hotkey",
  "objc2",
  "objc2-app-kit",

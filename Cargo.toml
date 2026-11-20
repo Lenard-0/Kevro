@@ -13,6 +13,7 @@ keywords = ["macos", "window-manager", "hotkeys", "tiling", "productivity"]
 categories = ["command-line-utilities", "os::macos-apis"]
 
 [dependencies]
+block2 = "0.6"
 global-hotkey = "0.10"
 tao = "0.37"
 tray-icon = "0.26"

@@ -12,6 +12,7 @@ mod geom;
 mod hotkeys;
 mod login;
 mod registry;
+mod rules;
 mod screens;
 mod snap;
 mod tray;
@@ -38,6 +39,10 @@ const POLL_INTERVAL: Duration = Duration::from_secs(2);
 enum UserEvent {
     Hotkey(GlobalHotKeyEvent),
     Menu(MenuEvent),
+    /// An observed app created a window (for per-app rules).
+    NewWindows,
+    /// An app launched or quit.
+    AppsChanged,
 }
 
 const USAGE: &str = "\
@@ -46,7 +51,9 @@ Usage: kevro [COMMAND]
 Commands:
   (none)           Run Kevro (menu bar app)
   action <ACTION>  Run one action now and exit, e.g. `kevro action snap:left_half`,
-                   `kevro action focus:focus_right`, `kevro action app:com.apple.Safari`
+                   `kevro action focus:focus_right`, `kevro action app:com.apple.Safari`,
+                   `kevro action move:left`, `kevro action swap:right`,
+                   `kevro action cycle:left_half,center_third,right_half`
   install          Start Kevro at login (writes a LaunchAgent and starts it now)
   uninstall        Stop starting at login (removes the LaunchAgent and stops it)
   windows          List on-screen windows as Kevro sees them (for debugging)
@@ -186,6 +193,8 @@ struct App {
     dispatcher: actions::Dispatcher,
     config: Config,
     config_mtime: Option<SystemTime>,
+    rules: rules::RuleEngine,
+    next_poll: Instant,
 }
 
 impl App {
@@ -202,6 +211,7 @@ impl App {
                     cfg.bindings.len()
                 );
                 self.config = cfg;
+                self.rules.sync(&self.config.rules);
             }
             Err(e) => tracing::error!("config error, keeping previous bindings: {e}"),
         }
@@ -209,6 +219,8 @@ impl App {
 
     fn poll(&mut self) {
         self.poll_config();
+        // Also attaches rule observers once Accessibility is granted.
+        self.rules.sync(&self.config.rules);
         if let Some(tray) = &mut self.tray {
             tray.set_trusted(ax::is_trusted());
         }
@@ -297,6 +309,14 @@ fn run() -> ! {
     MenuEvent::set_event_handler(Some(move |e| {
         let _ = proxy.send_event(UserEvent::Menu(e));
     }));
+    let proxy = event_loop.create_proxy();
+    ax::set_window_created_waker(move || {
+        let _ = proxy.send_event(UserEvent::NewWindows);
+    });
+    let proxy = event_loop.create_proxy();
+    apps::on_apps_changed(move || {
+        let _ = proxy.send_event(UserEvent::AppsChanged);
+    });
 
     match config::ensure_config_file() {
         Ok(true) => tracing::info!(
@@ -320,6 +340,8 @@ fn run() -> ! {
         dispatcher: actions::Dispatcher::default(),
         config: Config::default(),
         config_mtime: None,
+        rules: rules::RuleEngine::default(),
+        next_poll: Instant::now() + POLL_INTERVAL,
     };
 
     event_loop.run(move |event, _target, control_flow| {
@@ -343,16 +365,27 @@ fn run() -> ! {
                 }
                 app.poll();
             }
-            Event::NewEvents(StartCause::ResumeTimeReached { .. }) => app.poll(),
             Event::UserEvent(UserEvent::Hotkey(e)) => app.on_hotkey(e),
             Event::UserEvent(UserEvent::Menu(e)) => app.on_menu(e),
+            Event::UserEvent(UserEvent::NewWindows) => app
+                .rules
+                .on_new_windows(&app.config.rules, ax::take_new_windows()),
+            Event::UserEvent(UserEvent::AppsChanged) => app.rules.sync(&app.config.rules),
             _ => {}
         }
-        if let ControlFlow::WaitUntil(t) = *control_flow
-            && t > Instant::now()
-        {
-            return;
+
+        // Timers: the 2s poll (config file, permission) and pending rule
+        // layouts. Between them the loop sleeps, so idle CPU stays ~0%.
+        let now = Instant::now();
+        if now >= app.next_poll {
+            app.poll();
+            app.next_poll = now + POLL_INTERVAL;
         }
-        *control_flow = ControlFlow::WaitUntil(Instant::now() + POLL_INTERVAL);
+        app.rules.run_due(&mut app.dispatcher, &app.config.options);
+        let wake = app
+            .rules
+            .next_due()
+            .map_or(app.next_poll, |t| t.min(app.next_poll));
+        *control_flow = ControlFlow::WaitUntil(wake);
     })
 }

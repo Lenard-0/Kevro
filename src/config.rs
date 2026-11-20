@@ -45,8 +45,28 @@ struct RawConfig {
     snap: BTreeMap<String, String>,
     #[serde(default)]
     focus: BTreeMap<String, String>,
+    #[serde(default, rename = "move")]
+    moves: BTreeMap<String, String>,
+    #[serde(default)]
+    cycle: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    rules: Vec<RawRule>,
     #[serde(default)]
     options: Options,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRule {
+    app: String,
+    layout: String,
+}
+
+/// Lay out every new standard window of `app` (bundle ID or name) with `layout`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rule {
+    pub app: String,
+    pub layout: SnapAction,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +80,7 @@ pub struct Binding {
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     pub bindings: Vec<Binding>,
+    pub rules: Vec<Rule>,
     pub options: Options,
 }
 
@@ -126,13 +147,65 @@ pub fn parse(text: &str) -> Result<Config, String> {
         add("focus", key, action);
     }
 
+    for (key, name) in &raw.moves {
+        let action = parse_move(name).ok_or_else(|| format!("unknown move action \"{name}\""));
+        add("move", key, action);
+    }
+    for (key, names) in &raw.cycle {
+        add("cycle", key, parse_layouts(names).map(Action::Cycle));
+    }
+
+    let mut rules = Vec::new();
+    for (i, r) in raw.rules.iter().enumerate() {
+        let app = r.app.trim();
+        match parse_layout(&r.layout) {
+            _ if app.is_empty() => errors.push(format!("rules[{i}]: app is empty")),
+            Ok(layout) => rules.push(Rule {
+                app: app.to_string(),
+                layout,
+            }),
+            Err(e) => errors.push(format!("rules[{i}] ({app}): {e}")),
+        }
+    }
+
     if !errors.is_empty() {
         return Err(errors.join("; "));
     }
     Ok(Config {
         bindings,
+        rules,
         options: raw.options,
     })
+}
+
+pub fn parse_move(name: &str) -> Option<Action> {
+    let dir = |s: &str| match s {
+        "left" => Some(Direction::Left),
+        "right" => Some(Direction::Right),
+        "up" => Some(Direction::Up),
+        "down" => Some(Direction::Down),
+        _ => None,
+    };
+    if let Some(d) = name.strip_prefix("move_") {
+        return dir(d).map(Action::Move);
+    }
+    name.strip_prefix("swap_").and_then(dir).map(Action::Swap)
+}
+
+/// A layout usable in cycles and rules: any snap action except `restore`.
+fn parse_layout(name: &str) -> Result<SnapAction, String> {
+    match SnapAction::from_name(name) {
+        Some(SnapAction::Restore) => Err("\"restore\" is not a layout".into()),
+        Some(a) => Ok(a),
+        None => Err(format!("unknown layout \"{name}\"")),
+    }
+}
+
+pub fn parse_layouts(names: &[String]) -> Result<Vec<SnapAction>, String> {
+    if names.is_empty() {
+        return Err("a cycle needs at least one layout".into());
+    }
+    names.iter().map(|n| parse_layout(n)).collect()
 }
 
 pub fn config_dir() -> PathBuf {
@@ -212,6 +285,46 @@ mod tests {
     fn rejects_duplicate_across_sections() {
         let text = "[apps]\n\"ctrl+alt+x\" = \"Safari\"\n[snap]\n\"alt+ctrl+x\" = \"maximize\"";
         assert!(parse(text).unwrap_err().contains("more than once"));
+    }
+
+    #[test]
+    fn parses_move_cycle_and_rules() {
+        let text = r#"
+            [move]
+            "ctrl+alt+shift+left" = "move_left"
+            "ctrl+alt+cmd+shift+right" = "swap_right"
+            [cycle]
+            "ctrl+alt+space" = ["left_half", "center_third", "right_half"]
+            [[rules]]
+            app = "dev.warp.Warp-Stable"
+            layout = "right_half"
+        "#;
+        let cfg = parse(text).unwrap();
+        let actions: Vec<_> = cfg.bindings.iter().map(|b| b.action.clone()).collect();
+        assert!(actions.contains(&Action::Move(Direction::Left)));
+        assert!(actions.contains(&Action::Swap(Direction::Right)));
+        assert!(actions.contains(&Action::Cycle(vec![
+            SnapAction::LeftHalf,
+            SnapAction::CenterThird,
+            SnapAction::RightHalf
+        ])));
+        assert_eq!(
+            cfg.rules,
+            vec![Rule {
+                app: "dev.warp.Warp-Stable".into(),
+                layout: SnapAction::RightHalf
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_bad_move_cycle_and_rules() {
+        assert!(parse("[move]\n\"ctrl+alt+x\" = \"move_sideways\"").is_err());
+        assert!(parse("[cycle]\n\"ctrl+alt+x\" = []").is_err());
+        assert!(parse("[cycle]\n\"ctrl+alt+x\" = [\"restore\"]").is_err());
+        assert!(parse("[[rules]]\napp = \"Warp\"\nlayout = \"restore\"").is_err());
+        assert!(parse("[[rules]]\napp = \"\"\nlayout = \"maximize\"").is_err());
+        assert!(parse("[[rules]]\napp = \"Warp\"").is_err());
     }
 
     #[test]

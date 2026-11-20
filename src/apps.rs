@@ -117,3 +117,67 @@ fn open_with_command(target: &str) {
         Err(e) => tracing::warn!("cannot run open for \"{target}\": {e}"),
     }
 }
+
+/// A running app with a UI (Dock-style "regular" app).
+#[derive(Debug, Clone)]
+pub struct RunningApp {
+    pub pid: i32,
+    pub bundle_id: Option<String>,
+    pub name: Option<String>,
+}
+
+impl RunningApp {
+    /// Does a config target (bundle ID or app name) refer to this app?
+    pub fn matches(&self, target: &str) -> bool {
+        let t = target.trim_end_matches(".app");
+        self.bundle_id
+            .as_deref()
+            .is_some_and(|b| b.eq_ignore_ascii_case(t))
+            || self
+                .name
+                .as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(t))
+    }
+}
+
+pub fn running_apps() -> Vec<RunningApp> {
+    NSWorkspace::sharedWorkspace()
+        .runningApplications()
+        .iter()
+        .filter(|a| {
+            !a.isTerminated()
+                && a.activationPolicy() == objc2_app_kit::NSApplicationActivationPolicy::Regular
+        })
+        .map(|a| RunningApp {
+            pid: a.processIdentifier(),
+            bundle_id: a.bundleIdentifier().map(|s| s.to_string()),
+            name: a.localizedName().map(|s| s.to_string()),
+        })
+        .collect()
+}
+
+/// Call `f` on the main thread whenever an app launches or quits.
+pub fn on_apps_changed(f: impl Fn() + 'static) {
+    let center = NSWorkspace::sharedWorkspace().notificationCenter();
+    let f = std::rc::Rc::new(f);
+    // SAFETY: these are valid static notification names.
+    let names = unsafe {
+        [
+            objc2_app_kit::NSWorkspaceDidLaunchApplicationNotification,
+            objc2_app_kit::NSWorkspaceDidTerminateApplicationNotification,
+        ]
+    };
+    for name in names {
+        let f = f.clone();
+        let block = block2::RcBlock::new(
+            move |_n: std::ptr::NonNull<objc2_foundation::NSNotification>| f(),
+        );
+        // SAFETY: a nil queue delivers on the posting (main) thread. The
+        // returned token must outlive the observation, which is the whole
+        // life of the app, so it is deliberately leaked.
+        let token = unsafe {
+            center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block)
+        };
+        std::mem::forget(token);
+    }
+}

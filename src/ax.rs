@@ -4,18 +4,19 @@
 //! turned into `None`/`Err` rather than a panic, and each app element gets a
 //! short messaging timeout so an unresponsive app can't hang Kevro.
 
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::fmt;
 use std::ptr::{self, NonNull};
 
 use objc2_app_kit::NSWorkspace;
 use objc2_application_services::{
-    AXError, AXIsProcessTrusted, AXIsProcessTrustedWithOptions, AXUIElement, AXValue, AXValueType,
-    kAXTrustedCheckOptionPrompt,
+    AXError, AXIsProcessTrusted, AXIsProcessTrustedWithOptions, AXObserver, AXUIElement, AXValue,
+    AXValueType, kAXTrustedCheckOptionPrompt,
 };
 use objc2_core_foundation::{
-    CFArray, CFBoolean, CFDictionary, CFEqual, CFNumber, CFRetained, CFString, CFType, CGPoint,
-    CGRect, CGSize,
+    CFArray, CFBoolean, CFDictionary, CFEqual, CFNumber, CFRetained, CFRunLoop, CFRunLoopSource,
+    CFString, CFType, CGPoint, CGRect, CGSize, kCFRunLoopDefaultMode,
 };
 use objc2_core_graphics::{
     CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo, CGWindowListOption,
@@ -58,6 +59,10 @@ pub fn is_trusted() -> bool {
 /// Like `is_trusted`, but if not trusted asks macOS to show its
 /// "would like to control this computer" prompt.
 pub fn is_trusted_with_prompt() -> bool {
+    // For headless/dev runs: never show the system dialog.
+    if std::env::var_os("KEVRO_NO_PROMPT").is_some() {
+        return is_trusted();
+    }
     // SAFETY: kAXTrustedCheckOptionPrompt is a valid static CFString; the
     // dictionary holds CF objects and lives for the duration of the call.
     unsafe {
@@ -374,4 +379,95 @@ pub fn focus_window(window: &Window) {
     activate_pid(window.pid());
     // Raise again: activation can reorder the app's windows.
     window.raise();
+}
+
+// ---- Window-created observer ------------------------------------------------
+//
+// AXObserver callbacks arrive on the main run loop. The callback queues the
+// new window and calls a waker so the event loop picks it up.
+
+thread_local! {
+    static NEW_WINDOWS: RefCell<Vec<Window>> = const { RefCell::new(Vec::new()) };
+    static WAKER: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+}
+
+/// Called (on the main thread) whenever an observed app creates a window.
+pub fn set_window_created_waker(f: impl Fn() + 'static) {
+    WAKER.with(|w| *w.borrow_mut() = Some(Box::new(f)));
+}
+
+/// Windows created since the last call.
+pub fn take_new_windows() -> Vec<Window> {
+    NEW_WINDOWS.with(|q| std::mem::take(&mut *q.borrow_mut()))
+}
+
+unsafe extern "C-unwind" fn on_window_created(
+    _observer: NonNull<AXObserver>,
+    element: NonNull<AXUIElement>,
+    _notification: NonNull<CFString>,
+    _refcon: *mut c_void,
+) {
+    // SAFETY: AX passes a valid element that it owns; retain our own copy.
+    let el = unsafe { CFRetained::retain(element) };
+    let mut pid: i32 = 0;
+    // SAFETY: `pid` is a valid out-pointer.
+    if unsafe { el.pid(NonNull::from(&mut pid)) } != AXError::Success {
+        return;
+    }
+    unsafe { el.set_messaging_timeout(MESSAGING_TIMEOUT) };
+    NEW_WINDOWS.with(|q| q.borrow_mut().push(Element { el, pid }));
+    WAKER.with(|w| {
+        if let Some(f) = &*w.borrow() {
+            f();
+        }
+    });
+}
+
+/// Watches one app for new windows while alive.
+pub struct WindowObserver {
+    observer: CFRetained<AXObserver>,
+    source: CFRetained<CFRunLoopSource>,
+}
+
+impl WindowObserver {
+    pub fn new(pid: i32) -> Result<WindowObserver, AxErr> {
+        if !is_trusted() {
+            return Err(AxErr::NotTrusted);
+        }
+        let mut raw: *mut AXObserver = ptr::null_mut();
+        // SAFETY: `raw` is a valid out-pointer and the callback has the
+        // signature AX expects.
+        let err =
+            unsafe { AXObserver::create(pid, Some(on_window_created), NonNull::from(&mut raw)) };
+        if err != AXError::Success {
+            return Err(AxErr::Call("AXObserverCreate", err.0));
+        }
+        let observer = NonNull::new(raw)
+            .map(|p| unsafe { CFRetained::from_raw(p) })
+            .ok_or(AxErr::Call("AXObserverCreate", -1))?;
+        let app = Element::application(pid);
+        // SAFETY: valid observer, element and notification name.
+        let err = unsafe {
+            observer.add_notification(&app.el, &attr("AXWindowCreated"), ptr::null_mut())
+        };
+        if err != AXError::Success {
+            return Err(AxErr::Call("AXObserverAddNotification", err.0));
+        }
+        // SAFETY: the observer is valid; the source is retained by us and the run loop.
+        let source = unsafe { observer.run_loop_source() };
+        let run_loop = CFRunLoop::main().ok_or(AxErr::Call("CFRunLoopGetMain", -1))?;
+        // SAFETY: kCFRunLoopDefaultMode is a valid static.
+        run_loop.add_source(Some(&source), unsafe { kCFRunLoopDefaultMode });
+        Ok(WindowObserver { observer, source })
+    }
+}
+
+impl Drop for WindowObserver {
+    fn drop(&mut self) {
+        if let Some(run_loop) = CFRunLoop::main() {
+            // SAFETY: kCFRunLoopDefaultMode is a valid static.
+            run_loop.remove_source(Some(&self.source), unsafe { kCFRunLoopDefaultMode });
+        }
+        let _ = &self.observer;
+    }
 }

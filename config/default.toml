@@ -50,6 +50,29 @@
 "ctrl+alt+cmd+up"    = "focus_up"
 "ctrl+alt+cmd+down"  = "focus_down"
 
+# Move the focused window. Needs Accessibility permission.
+#   move_left/right/up/down  slide to that screen edge (keeping size); if
+#                            already there, jump to the next display that way
+#   swap_left/right/up/down  swap places with the nearest window that way
+[move]
+"ctrl+alt+shift+left"       = "move_left"
+"ctrl+alt+shift+right"      = "move_right"
+"ctrl+alt+cmd+shift+left"   = "swap_left"
+"ctrl+alt+cmd+shift+right"  = "swap_right"
+"ctrl+alt+cmd+shift+up"     = "swap_up"
+"ctrl+alt+cmd+shift+down"   = "swap_down"
+
+# Step the focused window through a list of layouts, one per press.
+# Any snap action except restore. Example:
+[cycle]
+# "ctrl+alt+s" = ["left_half", "center_third", "right_half"]
+
+# Per-app rules: every new window of the app opens in this layout.
+# Needs Accessibility permission. Dialogs and sheets are left alone.
+# [[rules]]
+# app = "dev.warp.Warp-Stable"
+# layout = "right_half"
+
 [options]
 # Pressing left_half / right_half again on an already-snapped window cycles
 # 1/2 -> 1/3 -> 2/3 of the screen.
