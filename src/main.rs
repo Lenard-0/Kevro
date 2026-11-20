@@ -4,9 +4,13 @@
 
 mod actions;
 mod apps;
+mod ax;
 mod config;
 mod focus;
+mod geom;
 mod hotkeys;
+mod registry;
+mod screens;
 mod snap;
 
 use std::time::{Duration, Instant, SystemTime};
@@ -36,6 +40,7 @@ Commands:
   (none)           Run Kevro (menu bar app)
   action <ACTION>  Run one action now and exit, e.g. `kevro action snap:left_half`,
                    `kevro action focus:focus_right`, `kevro action app:com.apple.Safari`
+  status           Show Accessibility permission, screens and config status
   help             Show this message";
 
 fn main() {
@@ -49,7 +54,7 @@ fn main() {
         ["action", spec] => match actions::Action::parse(spec) {
             Ok(action) => {
                 let options = config::load().map(|c| c.options).unwrap_or_default();
-                actions::dispatch(&action, &options);
+                actions::Dispatcher::default().dispatch(&action, &options);
                 // Give async work (app launches, logging) a moment to finish.
                 std::thread::sleep(Duration::from_millis(300));
             }
@@ -58,11 +63,31 @@ fn main() {
                 std::process::exit(2);
             }
         },
+        ["status"] => print_status(),
         ["help" | "--help" | "-h"] => println!("{USAGE}"),
         _ => {
             eprintln!("{USAGE}");
             std::process::exit(2);
         }
+    }
+}
+
+fn print_status() {
+    let trusted = ax::is_trusted();
+    println!("Kevro {}", env!("CARGO_PKG_VERSION"));
+    println!("Executable:    {}", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default());
+    println!(
+        "Accessibility: {}",
+        if trusted { "granted" } else { "NOT granted (snapping and focus disabled)" }
+    );
+    println!("Config:        {}", config::config_path().display());
+    match config::load() {
+        Ok(c) => println!("               valid, {} bindings", c.bindings.len()),
+        Err(e) => println!("               ERROR: {e}"),
+    }
+    println!("Log:           {}", config::log_dir().join("kevro.log").display());
+    for (i, s) in screens::all().iter().enumerate() {
+        println!("Screen {i}:      frame {:?}\n               visible {:?}", s.frame, s.visible);
     }
 }
 
@@ -89,6 +114,7 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
 
 struct App {
     hotkeys: Hotkeys,
+    dispatcher: actions::Dispatcher,
     config: Config,
     config_mtime: Option<SystemTime>,
 }
@@ -127,7 +153,7 @@ impl App {
         let Some((key, action)) = self.hotkeys.lookup(event.id) else { return };
         tracing::info!("hotkey {key} -> {action}");
         let action = action.clone();
-        actions::dispatch(&action, &self.config.options);
+        self.dispatcher.dispatch(&action, &self.config.options);
     }
 }
 
@@ -154,7 +180,7 @@ fn run() -> ! {
             std::process::exit(1);
         }
     };
-    let mut app = App { hotkeys, config: Config::default(), config_mtime: None };
+    let mut app = App { hotkeys, dispatcher: actions::Dispatcher::default(), config: Config::default(), config_mtime: None };
 
     event_loop.run(move |event, _target, control_flow| {
         match event {
