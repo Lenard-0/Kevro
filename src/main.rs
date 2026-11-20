@@ -1,6 +1,7 @@
 //! Kevro: keyboard-first window and app control for macOS.
 //!
-//! Startup, logging, the main-thread event loop and config hot-reload.
+//! Startup, CLI subcommands, logging, the main-thread event loop, the menu
+//! bar icon and config hot-reload.
 
 mod actions;
 mod apps;
@@ -9,9 +10,11 @@ mod config;
 mod focus;
 mod geom;
 mod hotkeys;
+mod login;
 mod registry;
 mod screens;
 mod snap;
+mod tray;
 
 use std::time::{Duration, Instant, SystemTime};
 
@@ -22,15 +25,19 @@ use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
 
+use tray_icon::menu::MenuEvent;
+
 use crate::config::Config;
 use crate::hotkeys::Hotkeys;
+use crate::tray::{MenuAction, Tray};
 
-/// How often to check the config file for changes.
-const CONFIG_POLL: Duration = Duration::from_secs(2);
+/// How often to check the config file and Accessibility status for changes.
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 enum UserEvent {
     Hotkey(GlobalHotKeyEvent),
+    Menu(MenuEvent),
 }
 
 const USAGE: &str = "\
@@ -40,6 +47,8 @@ Commands:
   (none)           Run Kevro (menu bar app)
   action <ACTION>  Run one action now and exit, e.g. `kevro action snap:left_half`,
                    `kevro action focus:focus_right`, `kevro action app:com.apple.Safari`
+  install          Start Kevro at login (writes a LaunchAgent and starts it now)
+  uninstall        Stop starting at login (removes the LaunchAgent and stops it)
   windows          List on-screen windows as Kevro sees them (for debugging)
   status           Show Accessibility permission, screens and config status
   help             Show this message";
@@ -65,6 +74,8 @@ fn main() {
             }
         },
         ["status"] => print_status(),
+        ["install"] => exit_on_err(login::install()),
+        ["uninstall"] => exit_on_err(login::uninstall()),
         ["windows"] => {
             for w in ax::onscreen_windows() {
                 let name = objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(w.pid)
@@ -82,6 +93,13 @@ fn main() {
     }
 }
 
+fn exit_on_err(r: Result<(), String>) {
+    if let Err(e) = r {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+}
+
 fn print_status() {
     let trusted = ax::is_trusted();
     println!("Kevro {}", env!("CARGO_PKG_VERSION"));
@@ -96,6 +114,11 @@ fn print_status() {
         Err(e) => println!("               ERROR: {e}"),
     }
     println!("Log:           {}", config::log_dir().join("kevro.log").display());
+    let agent = login::plist_path();
+    println!(
+        "Login item:    {}",
+        if agent.exists() { format!("installed ({})", agent.display()) } else { "not installed".into() }
+    );
     for (i, s) in screens::all().iter().enumerate() {
         println!("Screen {i}:      frame {:?}\n               visible {:?}", s.frame, s.visible);
     }
@@ -123,6 +146,7 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
 }
 
 struct App {
+    tray: Option<Tray>,
     hotkeys: Hotkeys,
     dispatcher: actions::Dispatcher,
     config: Config,
@@ -148,6 +172,30 @@ impl App {
         }
     }
 
+    fn poll(&mut self) {
+        self.poll_config();
+        if let Some(tray) = &mut self.tray {
+            tray.set_trusted(ax::is_trusted());
+        }
+    }
+
+    fn on_menu(&mut self, event: MenuEvent) {
+        let Some(action) = self.tray.as_ref().and_then(|t| t.action_for(&event)) else { return };
+        match action {
+            MenuAction::Accessibility => open(&[tray::SETTINGS_URL]),
+            MenuAction::Reload => {
+                tracing::info!("reload requested from menu");
+                self.reload_config();
+            }
+            MenuAction::OpenConfig => open(&["-t", &config::config_path().to_string_lossy()]),
+            MenuAction::OpenLog => open(&[&config::log_dir().join("kevro.log").to_string_lossy()]),
+            MenuAction::Quit => {
+                tracing::info!("quit requested from menu");
+                std::process::exit(0);
+            }
+        }
+    }
+
     fn poll_config(&mut self) {
         let mtime = config::modified_time();
         if mtime.is_some() && mtime != self.config_mtime {
@@ -167,7 +215,28 @@ impl App {
     }
 }
 
+fn open(args: &[&str]) {
+    if let Err(e) = std::process::Command::new("/usr/bin/open").args(args).spawn() {
+        tracing::warn!("open {args:?} failed: {e}");
+    }
+}
+
+/// Exit if another bundled Kevro is already running (e.g. the login item
+/// plus a manual launch). Exits with 0 so launchd doesn't restart us.
+fn exit_if_already_running() {
+    let own = std::process::id() as i32;
+    let others = objc2_app_kit::NSRunningApplication::runningApplicationsWithBundleIdentifier(
+        &objc2_foundation::NSString::from_str(login::LABEL),
+    );
+    if let Some(other) = others.iter().find(|a| a.processIdentifier() != own && !a.isTerminated()) {
+        tracing::info!("Kevro is already running (pid {}), exiting", other.processIdentifier());
+        std::process::exit(0);
+    }
+}
+
 fn run() -> ! {
+    exit_if_already_running();
+
     let mut event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     // Menu-bar-only: no Dock icon, even when run unbundled from a terminal.
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
@@ -175,6 +244,10 @@ fn run() -> ! {
     let proxy = event_loop.create_proxy();
     GlobalHotKeyEvent::set_event_handler(Some(move |e| {
         let _ = proxy.send_event(UserEvent::Hotkey(e));
+    }));
+    let proxy = event_loop.create_proxy();
+    MenuEvent::set_event_handler(Some(move |e| {
+        let _ = proxy.send_event(UserEvent::Menu(e));
     }));
 
     match config::ensure_config_file() {
@@ -190,13 +263,38 @@ fn run() -> ! {
             std::process::exit(1);
         }
     };
-    let mut app = App { hotkeys, dispatcher: actions::Dispatcher::default(), config: Config::default(), config_mtime: None };
+    let mut app = App {
+        tray: None,
+        hotkeys,
+        dispatcher: actions::Dispatcher::default(),
+        config: Config::default(),
+        config_mtime: None,
+    };
 
     event_loop.run(move |event, _target, control_flow| {
         match event {
-            Event::NewEvents(StartCause::Init) => app.reload_config(),
-            Event::NewEvents(StartCause::ResumeTimeReached { .. }) => app.poll_config(),
+            Event::NewEvents(StartCause::Init) => {
+                // The tray must be created once the event loop is running.
+                match Tray::new() {
+                    Ok(t) => app.tray = Some(t),
+                    Err(e) => tracing::error!("cannot create menu bar icon: {e}"),
+                }
+                app.reload_config();
+                if ax::is_trusted() {
+                    tracing::info!("Accessibility permission granted");
+                } else {
+                    tracing::warn!(
+                        "Accessibility permission not granted: app hotkeys work, snapping and \
+                         focus are disabled until you allow Kevro in System Settings → \
+                         Privacy & Security → Accessibility"
+                    );
+                    ax::is_trusted_with_prompt();
+                }
+                app.poll();
+            }
+            Event::NewEvents(StartCause::ResumeTimeReached { .. }) => app.poll(),
             Event::UserEvent(UserEvent::Hotkey(e)) => app.on_hotkey(e),
+            Event::UserEvent(UserEvent::Menu(e)) => app.on_menu(e),
             _ => {}
         }
         if let ControlFlow::WaitUntil(t) = *control_flow
@@ -204,6 +302,6 @@ fn run() -> ! {
         {
             return;
         }
-        *control_flow = ControlFlow::WaitUntil(Instant::now() + CONFIG_POLL);
+        *control_flow = ControlFlow::WaitUntil(Instant::now() + POLL_INTERVAL);
     })
 }
