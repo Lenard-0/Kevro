@@ -3,6 +3,7 @@
 //! Startup, logging, the main-thread event loop and config hot-reload.
 
 mod actions;
+mod apps;
 mod config;
 mod focus;
 mod hotkeys;
@@ -28,10 +29,41 @@ enum UserEvent {
     Hotkey(GlobalHotKeyEvent),
 }
 
+const USAGE: &str = "\
+Usage: kevro [COMMAND]
+
+Commands:
+  (none)           Run Kevro (menu bar app)
+  action <ACTION>  Run one action now and exit, e.g. `kevro action snap:left_half`,
+                   `kevro action focus:focus_right`, `kevro action app:com.apple.Safari`
+  help             Show this message";
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
     let _log_guard = init_logging();
-    tracing::info!("Kevro {} starting", env!("CARGO_PKG_VERSION"));
-    run();
+    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        [] => {
+            tracing::info!("Kevro {} starting", env!("CARGO_PKG_VERSION"));
+            run();
+        }
+        ["action", spec] => match actions::Action::parse(spec) {
+            Ok(action) => {
+                let options = config::load().map(|c| c.options).unwrap_or_default();
+                actions::dispatch(&action, &options);
+                // Give async work (app launches, logging) a moment to finish.
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        },
+        ["help" | "--help" | "-h"] => println!("{USAGE}"),
+        _ => {
+            eprintln!("{USAGE}");
+            std::process::exit(2);
+        }
+    }
 }
 
 fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
@@ -92,9 +124,10 @@ impl App {
         if event.state != HotKeyState::Pressed {
             return;
         }
-        if let Some((key, action)) = self.hotkeys.lookup(event.id) {
-            tracing::info!("hotkey {key} -> {action}");
-        }
+        let Some((key, action)) = self.hotkeys.lookup(event.id) else { return };
+        tracing::info!("hotkey {key} -> {action}");
+        let action = action.clone();
+        actions::dispatch(&action, &self.config.options);
     }
 }
 
